@@ -14,8 +14,7 @@ SIGNAL_LABELS = {
 }
 
 DEFAULT_BENCHMARK_PATHS = [
-    Path(__file__).resolve().parent / "model" / "credit_ml_dataset.csv",
-    Path("/Users/kritishahi/Documents/credit_score_ml/credit_ml_dataset.csv"),
+    Path(__file__).resolve().parent / "data" / "credit_ml_dataset.csv"
 ]
 
 SCORE_BANDS = [
@@ -51,12 +50,15 @@ def _load_rows() -> tuple:
     benchmark_paths = ([Path(configured_path)] if configured_path else []) + DEFAULT_BENCHMARK_PATHS
     data_path = next((path for path in benchmark_paths if path.exists() and path.is_file()), None)
     if not data_path:
+        print("[Benchmark] No dataset found — benchmark context will be skipped")
         return tuple()
 
+    print(f"[Benchmark] Loaded dataset from: {data_path}")
     try:
         with data_path.open(newline="") as f:
             return tuple(csv.DictReader(f))
-    except Exception:
+    except Exception as e:
+        print(f"[Benchmark] Failed to read dataset: {e}")
         return tuple()
 
 

@@ -470,3 +470,8 @@ def _clamp_signal_score(value) -> int:
 
 def _clamp_score(value, min_score: int = 300, max_score: int = 850) -> int:
     return int(max(min_score, min(max_score, round(value))))
+
+
+def calculate_score_fast(signals: dict) -> dict:
+    """Rule-only scoring with no ML and no LLM — used for the What If simulator."""
+    return _calculate_rule_score(signals)
