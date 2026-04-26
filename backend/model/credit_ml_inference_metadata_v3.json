@@ -1,0 +1,87 @@
+{
+  "best_model_name": "LightGBM (default)",
+  "feature_columns": [
+    "job_app_sessions_per_week",
+    "gig_payment_inflows_monthly_inr",
+    "sms_net_monthly_inr",
+    "gender_M",
+    "gender_Other",
+    "id_type_Aadhaar",
+    "id_type_Driving Licence",
+    "id_type_Voter ID",
+    "gig_income_trend_Declining",
+    "gig_income_trend_Growing",
+    "gig_income_trend_Stable"
+  ],
+  "application_features": [
+    "job_app_sessions_per_week",
+    "gig_payment_inflows_monthly_inr",
+    "sms_net_monthly_inr",
+    "gender",
+    "id_type",
+    "gig_income_trend"
+  ],
+  "categorical_columns": [
+    "gender",
+    "id_type",
+    "gig_income_trend"
+  ],
+  "target": "default_label",
+  "metrics": {
+    "LightGBM (default)": {
+      "AUC": 0.7533,
+      "KS": 0.4439,
+      "Gini": 0.5066,
+      "Brier": 0.2202,
+      "RMSE": 0.4693,
+      "R2": 0.1189,
+      "LogLoss": 0.6644
+    },
+    "LightGBM (tuned)": {
+      "AUC": 0.7448,
+      "KS": 0.4225,
+      "Gini": 0.4895,
+      "Brier": 0.203,
+      "RMSE": 0.4505,
+      "R2": 0.1879,
+      "LogLoss": 0.5912
+    },
+    "XGBoost (tuned)": {
+      "AUC": 0.7424,
+      "KS": 0.4132,
+      "Gini": 0.4847,
+      "Brier": 0.2033,
+      "RMSE": 0.4509,
+      "R2": 0.1868,
+      "LogLoss": 0.5926
+    },
+    "XGBoost (default)": {
+      "AUC": 0.7354,
+      "KS": 0.4027,
+      "Gini": 0.4707,
+      "Brier": 0.2429,
+      "RMSE": 0.4929,
+      "R2": 0.0282,
+      "LogLoss": 0.7543
+    },
+    "Logistic Regression": {
+      "AUC": 0.7209,
+      "KS": 0.3506,
+      "Gini": 0.4417,
+      "Brier": 0.2129,
+      "RMSE": 0.4614,
+      "R2": 0.1484,
+      "LogLoss": 0.6153
+    }
+  },
+  "score_config": {
+    "pdo": 20,
+    "base_score": 600,
+    "base_odds": 1.0,
+    "min_score": 300,
+    "max_score": 850
+  },
+  "feature_engineering": {
+    "sms_net_monthly_inr": "sms_avg_monthly_credit_inr - sms_avg_monthly_debit_inr"
+  }
+}

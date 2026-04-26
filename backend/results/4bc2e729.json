@@ -1,0 +1,47 @@
+{
+  "applicant_id": "4bc2e729",
+  "name": "KRITI SHAHI",
+  "score": {
+    "final_score": 640,
+    "grade": "Fair",
+    "grade_color": "#f97316",
+    "signal_scores": {
+      "payment_consistency": 100,
+      "rental_tenure": 75,
+      "bill_regularity": 85,
+      "income_stability": 0,
+      "data_completeness": 55
+    },
+    "normalized_pct": 61.8,
+    "recommendation": "High default risk detected with incomplete financial documentation; provide income verification and additional payment history to improve eligibility."
+  },
+  "signals": {
+    "payment_consistency": {
+      "score": 100,
+      "evidence": "Previous balance of $92.90 was paid in full (marked 'Thank you!' with $92.90 CR credit). Current balance forward is $0.00, indicating consistent full payment of prior bills.",
+      "months_available": 1
+    },
+    "bill_regularity": {
+      "score": 85,
+      "evidence": "Water utility bill shows regular monthly service from June 2019 through June 2020 (13 months of usage history displayed in bar chart). Current billing cycle is 7/7 with statement date 06/30/2020. Consistent service address at 123 Sample Road.",
+      "months_available": 13
+    },
+    "income_stability": {
+      "score": 0,
+      "evidence": "No income documentation provided. This is a utility bill only, contains no income information.",
+      "declared_income": null
+    },
+    "rental_tenure": {
+      "score": 75,
+      "evidence": "Service address at 123 Sample Road, Pascoag RI 02859 shows at least 13 months of continuous water service history from June 2019 to June 2020. Account holder names are John Doe and Jane Doe.",
+      "months_at_address": 13
+    },
+    "data_completeness": {
+      "score": 55,
+      "evidence": "Single utility bill provided (water). Document is clear and complete with full usage history, payment record, and account details. However, only one document type provided - no income verification, no additional utility bills, no rental agreement. Limited to assess full financial picture.",
+      "docs_provided": 1
+    }
+  },
+  "narrative": "KRITI SHAHI demonstrates excellent payment discipline, clearing a $92.90 water bill in full with 13 months of consistent service at 123 Sample Road. However, the application raises concerns: no income documentation was submitted, and the utility account is registered under John Doe and Jane Doe, not the applicant. Without proof of income or direct account ownership, approval cannot be recommended despite the 640 credit score. Applicants in this score range typically provide 3-4 verification documents.",
+  "audio_url": "/audio/4bc2e729.mp3"
+}
