@@ -27,13 +27,8 @@ MODEL_DIR = Path(__file__).resolve().parent / "model"
 MODEL_BUNDLE_PATH = MODEL_DIR / "credit_ml_inference_bundle_v3.joblib"
 MODEL_METADATA_PATH = MODEL_DIR / "credit_ml_inference_metadata_v3.json"
 
-# Some model dependencies may import Matplotlib while unpickling. Keep its cache
-# inside a writable temp path so scoring does not emit filesystem warnings.
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
-# The exported ML model was trained on application-level features, while the
-# live app currently receives extracted document signals. Keep the rule score
-# dominant until the extractor collects the exact ML feature schema directly.
 RULE_SCORE_WEIGHT = 0.60
 ML_SCORE_WEIGHT = 0.40
 MAX_LLM_ADJUSTMENT = 25
@@ -42,6 +37,8 @@ MAX_LLM_ADJUSTMENT = 25
 def calculate_score(signals: dict) -> dict:
     """Blend rule scoring, ML default risk, and optional LLM-assisted calibration."""
     rule_data = _calculate_rule_score(signals)
+    print(f"[Scorer] Rule score: {rule_data['final_score']} ({rule_data['grade']})")
+
     ml_data = _score_with_ml_model(signals)
 
     blended_score = rule_data["final_score"]
@@ -50,9 +47,17 @@ def calculate_score(signals: dict) -> dict:
             (RULE_SCORE_WEIGHT * rule_data["final_score"])
             + (ML_SCORE_WEIGHT * ml_data["score"])
         )
+        print(f"[Scorer] Blended score: {blended_score} "
+              f"(rule {rule_data['final_score']} x{RULE_SCORE_WEIGHT} "
+              f"+ ML {ml_data['score']} x{ML_SCORE_WEIGHT})")
+    else:
+        print(f"[Scorer] ML unavailable — using rule score only: {blended_score}")
 
     agent_data = _run_credit_decision_agent(signals, rule_data, ml_data, blended_score)
     final_score = _clamp_score(blended_score + agent_data.get("score_adjustment", 0))
+
+    adj = agent_data.get("score_adjustment", 0)
+    print(f"[Scorer] Agent adjustment: {'+' if adj >= 0 else ''}{adj} → final score: {final_score}")
 
     grade, color = _grade_for_score(final_score)
     normalized = round(((final_score - 300) / 550) * 100, 1)
@@ -99,12 +104,15 @@ def _score_with_ml_model(signals: dict) -> Optional[dict]:
     """Run the exported risk model and convert P(default) to a 300-850 score."""
     bundle = _load_model_bundle()
     if not bundle:
+        print("[Scorer] ML model bundle not loaded — falling back to rule score")
         return None
 
     model = _select_model(bundle)
     if model is None:
+        print("[Scorer] No model found in bundle — falling back to rule score")
         return None
 
+    model_name = bundle.get("best_model_name", "unknown")
     features = _engineer_model_features(signals, bundle)
     row = [[features[column] for column in bundle["feature_columns"]]]
 
@@ -112,7 +120,8 @@ def _score_with_ml_model(signals: dict) -> Optional[dict]:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             probability_default = float(model.predict_proba(row)[0][1])
-    except Exception:
+    except Exception as e:
+        print(f"[Scorer] ML prediction failed: {e} — falling back to rule score")
         return None
 
     score_config = bundle.get("score_config", {})
@@ -125,10 +134,13 @@ def _score_with_ml_model(signals: dict) -> Optional[dict]:
         max_score=score_config.get("max_score", 850),
     )
 
+    print(f"[Scorer] ML model: {model_name} | "
+          f"P(default)={round(probability_default, 4)} | ML score={ml_score}")
+
     return {
         "score": ml_score,
         "probability_default": probability_default,
-        "model_name": bundle.get("best_model_name", "ML risk model"),
+        "model_name": model_name,
         "features": features,
     }
 
@@ -136,13 +148,15 @@ def _score_with_ml_model(signals: dict) -> Optional[dict]:
 @lru_cache(maxsize=1)
 def _load_model_bundle() -> Optional[dict]:
     if not MODEL_BUNDLE_PATH.exists():
+        print(f"[Scorer] Model file not found at {MODEL_BUNDLE_PATH}")
         return None
 
     try:
         import joblib
-
         bundle = joblib.load(MODEL_BUNDLE_PATH)
-    except Exception:
+        print(f"[Scorer] Model bundle loaded — best model: {bundle.get('best_model_name', 'unknown')}")
+    except Exception as e:
+        print(f"[Scorer] Failed to load model bundle: {e}")
         return None
 
     metadata = _load_model_metadata()
@@ -217,7 +231,6 @@ def _engineer_model_features(signals: dict, bundle: dict) -> dict:
         "gig_income_trend_Stable": 1 if gig_income_trend == "Stable" else 0,
     }
 
-    # Do not infer protected or identity fields from documents unless explicit.
     if "aadhaar" in evidence_text:
         values["id_type_Aadhaar"] = 1
     elif "driving licence" in evidence_text or "driver" in evidence_text:
@@ -293,14 +306,19 @@ def _llm_agent_calibration(
     blended_score: int,
 ) -> Optional[dict]:
     if os.environ.get("SCORER_LLM_ENABLED", "true").lower() in {"0", "false", "no"}:
+        print("[Scorer] LLM calibration disabled via SCORER_LLM_ENABLED")
         return None
     if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("[Scorer] LLM calibration skipped — ANTHROPIC_API_KEY not set")
         return None
 
     try:
         import anthropic
     except Exception:
+        print("[Scorer] LLM calibration skipped — anthropic package not available")
         return None
+
+    print("[Scorer] Running LLM calibration via Claude...")
 
     prompt = f"""You are a credit decision agent for an alternative micro-lending score.
 Use the rule score, ML default risk score, and evidence signals to make a bounded calibration.
@@ -332,8 +350,14 @@ Signals JSON: {json.dumps(signals)[:3000]}
             messages=[{"role": "user", "content": prompt}],
         )
         raw = msg.content[0].text.strip()
-        return _parse_agent_json(raw)
-    except Exception:
+        result = _parse_agent_json(raw)
+        if result:
+            print(f"[Scorer] LLM calibration: adjustment={result.get('score_adjustment', 0)}")
+        else:
+            print("[Scorer] LLM calibration returned unparseable response — skipping")
+        return result
+    except Exception as e:
+        print(f"[Scorer] LLM calibration failed: {e} — skipping")
         return None
 
 
@@ -363,7 +387,6 @@ def _prob_to_score(
     min_score: int = 300,
     max_score: int = 850,
 ) -> int:
-    """Convert default probability to score using the notebook log-odds formula."""
     probability_default = max(1e-6, min(1 - 1e-6, probability_default))
     factor = pdo / math.log(2)
     offset = base_score - factor * math.log(base_odds)
