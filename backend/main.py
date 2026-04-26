@@ -61,7 +61,7 @@ async def upload_docs(files: list[UploadFile] = File(...)):
 
 
 @app.get("/score/{applicant_id}")
-async def score_applicant(applicant_id: str, email: str = "", phone: str = "", name: str = "Applicant"):
+async def score_applicant(applicant_id: str, email: str, phone: str = "", name: str = "Applicant"):
     """SSE endpoint — streams pipeline progress to frontend"""
     applicant_dir = UPLOAD_DIR / applicant_id
     if not applicant_dir.exists():

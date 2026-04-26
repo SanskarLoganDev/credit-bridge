@@ -39,6 +39,7 @@ export default function UploadPage({ onStartScoring }) {
   async function handleSubmit() {
     if (!files.length) return setError('Upload at least one document.')
     if (!name.trim()) return setError('Enter the applicant name.')
+    if (!email.trim()) return setError('Enter the applicant email.')
     setError('')
     setUploading(true)
     try {
@@ -83,15 +84,15 @@ export default function UploadPage({ onStartScoring }) {
               <label style={styles.sectionLabel}>Applicant details</label>
               <div style={styles.fieldGroup}>
                 <label style={styles.fieldLabel}>Full name *</label>
-                <input style={styles.input} placeholder="Priya Sharma" value={name} onChange={e => setName(e.target.value)} />
+                <input style={styles.input} placeholder="James Howlett" value={name} onChange={e => setName(e.target.value)} />
               </div>
               <div style={styles.fieldGroup}>
-                <label style={styles.fieldLabel}>Email (for report)</label>
-                <input style={styles.input} placeholder="priya@example.com" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+                <label style={styles.fieldLabel}>Email (for report) *</label>
+                <input style={styles.input} placeholder="logan@example.com" type="email" value={email} onChange={e => setEmail(e.target.value)} />
               </div>
               <div style={styles.fieldGroup}>
                 <label style={styles.fieldLabel}>WhatsApp / phone</label>
-                <input style={styles.input} placeholder="+91 98765 43210" value={phone} onChange={e => setPhone(e.target.value)} />
+                <input style={styles.input} placeholder="+1 98765 43210" value={phone} onChange={e => setPhone(e.target.value)} />
               </div>
             </div>
 
