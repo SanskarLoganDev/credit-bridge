@@ -225,3 +225,6 @@ frontend/node_modules
 
 # audio files
 backend/audio/
+
+# uploads
+backend/uploads/
