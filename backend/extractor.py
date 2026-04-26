@@ -3,13 +3,10 @@ import json
 import base64
 import asyncio
 from pathlib import Path
-import google.generativeai as genai
 from PIL import Image
 import io
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-
-SYSTEM_PROMPT = """You are a financial document analyst for micro-lending.
+EXTRACTION_PROMPT = """You are a financial document analyst for micro-lending.
 You will receive one or more document images: utility bills, phone bills, rental receipts, or income forms.
 Analyze each document and extract the following 5 signals as JSON.
 
@@ -55,10 +52,19 @@ Be strict — do not inflate scores. Micro-lenders rely on accuracy."""
 
 
 async def extract_signals(doc_paths: list[Path]) -> dict:
-    """Send all documents to Gemini Vision and extract structured signals"""
+    """Route to Gemini or Claude based on AI_PROVIDER env var"""
+    provider = os.environ.get("AI_PROVIDER", "gemini").lower()
+    if provider == "claude":
+        return await _extract_with_claude(doc_paths)
+    return await _extract_with_gemini(doc_paths)
+
+
+async def _extract_with_gemini(doc_paths: list[Path]) -> dict:
+    """Extract signals using Gemini Vision"""
+    import google.generativeai as genai
+    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model = genai.GenerativeModel("gemini-2.0-flash")
 
-    # Build content parts: all images + the prompt
     parts = []
     for path in doc_paths:
         img_data = _load_image_as_base64(path)
@@ -68,27 +74,57 @@ async def extract_signals(doc_paths: list[Path]) -> dict:
                 "data": img_data
             }
         })
-
-    parts.append({"text": SYSTEM_PROMPT})
+    parts.append({"text": EXTRACTION_PROMPT})
 
     loop = asyncio.get_event_loop()
     response = await loop.run_in_executor(None, lambda: model.generate_content(parts))
+    return _parse_json(response.text)
 
-    raw = response.text.strip()
-    # Strip markdown fences if present
+
+async def _extract_with_claude(doc_paths: list[Path]) -> dict:
+    """Extract signals using Claude Vision"""
+    import anthropic
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    content = []
+    for path in doc_paths:
+        img_data = _load_image_as_base64(path)
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": _get_mime_type(path),
+                "data": img_data,
+            }
+        })
+    content.append({"type": "text", "text": EXTRACTION_PROMPT})
+
+    loop = asyncio.get_event_loop()
+
+    def _call():
+        msg = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": content}]
+        )
+        return msg.content[0].text
+
+    response = await loop.run_in_executor(None, _call)
+    return _parse_json(response)
+
+
+def _parse_json(raw: str) -> dict:
+    """Strip markdown fences if present and parse JSON"""
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
-    raw = raw.strip()
-
-    signals = json.loads(raw)
-    return signals
+    return json.loads(raw.strip())
 
 
 def _load_image_as_base64(path: Path) -> str:
     img = Image.open(path)
-    # Resize if too large to save tokens
     if max(img.size) > 2048:
         img.thumbnail((2048, 2048))
     buf = io.BytesIO()

@@ -3,11 +3,16 @@ import json
 import asyncio
 import uuid
 from pathlib import Path
+
+# load_dotenv MUST run before importing any module that reads env vars at import time
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
 from extractor import extract_signals
 from scorer import calculate_score
@@ -15,8 +20,6 @@ from narrator import generate_narrative
 from voice import generate_audio
 from notifier import send_notifications
 from firestore_client import write_to_firestore
-
-load_dotenv()
 
 app = FastAPI(title="CreditBridge API")
 
@@ -33,16 +36,10 @@ AUDIO_DIR = Path("audio")
 AUDIO_DIR.mkdir(exist_ok=True)
 
 
-class NotifyRequest(BaseModel):
-    applicant_id: str
-    email: str
-    phone: str
-    name: str
-
-
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    provider = os.environ.get("AI_PROVIDER", "gemini")
+    return {"status": "ok", "ai_provider": provider}
 
 
 @app.post("/upload")
@@ -76,8 +73,10 @@ async def score_applicant(applicant_id: str, email: str = "", phone: str = "", n
 
     async def pipeline():
         try:
-            # Step 1: Gemini extraction
-            yield _sse("step", {"step": 1, "label": "Extracting documents with Gemini Vision..."})
+            provider = os.environ.get("AI_PROVIDER", "gemini").upper()
+
+            # Step 1: extraction
+            yield _sse("step", {"step": 1, "label": f"Extracting documents with {provider} Vision..."})
             signals = await extract_signals(doc_paths)
             yield _sse("step", {"step": 1, "label": "Documents extracted", "done": True, "signals": signals})
 
@@ -87,7 +86,7 @@ async def score_applicant(applicant_id: str, email: str = "", phone: str = "", n
             score_data = calculate_score(signals)
             yield _sse("step", {"step": 2, "label": "Score calculated", "done": True, "score": score_data})
 
-            # Step 3: Claude narrative
+            # Step 3: Claude narrative (always Claude regardless of AI_PROVIDER)
             yield _sse("step", {"step": 3, "label": "Writing credit narrative with Claude..."})
             narrative = await generate_narrative(score_data, signals, name)
             yield _sse("step", {"step": 3, "label": "Narrative written", "done": True})
@@ -115,20 +114,20 @@ async def score_applicant(applicant_id: str, email: str = "", phone: str = "", n
                 await send_notifications(email, phone, name, score_data, narrative)
             yield _sse("step", {"step": 5, "label": "Complete", "done": True})
 
-            # Final result
             yield _sse("result", result)
 
         except Exception as e:
             yield _sse("error", {"message": str(e)})
 
-    return StreamingResponse(pipeline(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        pipeline(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-# Serve audio files
-from fastapi.staticfiles import StaticFiles
 app.mount("/audio", StaticFiles(directory="audio"), name="audio")

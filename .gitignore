@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Service account json
+backend/firebase-service-account.json
+
+# node
+frontend/node_modules
+
+# audio files
+backend/audio/
