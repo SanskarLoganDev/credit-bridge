@@ -34,6 +34,32 @@ ML_SCORE_WEIGHT = 0.40
 MAX_LLM_ADJUSTMENT = 25
 
 
+def calculate_score_fast(signals: dict) -> dict:
+    """Rule + ML blend without LLM calibration. Used for real-time what-if calculations."""
+    rule_data = _calculate_rule_score(signals)
+    ml_data = _score_with_ml_model(signals)
+
+    blended_score = rule_data["final_score"]
+    if ml_data:
+        blended_score = round(
+            (RULE_SCORE_WEIGHT * rule_data["final_score"])
+            + (ML_SCORE_WEIGHT * ml_data["score"])
+        )
+
+    final_score = _clamp_score(blended_score)
+    grade, color = _grade_for_score(final_score)
+    normalized = round(((final_score - 300) / 550) * 100, 1)
+
+    return {
+        "final_score": final_score,
+        "grade": grade,
+        "grade_color": color,
+        "signal_scores": rule_data["signal_scores"],
+        "normalized_pct": normalized,
+        "recommendation": _recommendation(grade),
+    }
+
+
 def calculate_score(signals: dict) -> dict:
     """Blend rule scoring, ML default risk, and optional LLM-assisted calibration."""
     rule_data = _calculate_rule_score(signals)

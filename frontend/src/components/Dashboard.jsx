@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -31,6 +31,8 @@ export default function Dashboard({ applicantId, applicantInfo, result, onResult
   const [currentStep, setCurrentStep] = useState(1)
   const [error, setError] = useState('')
   const [playing, setPlaying] = useState(false)
+  const [showBenchmark, setShowBenchmark] = useState(false)
+  const [showWhatIf, setShowWhatIf] = useState(false)
   const audioRef = useRef(null)
 
   useEffect(() => {
@@ -75,6 +77,7 @@ export default function Dashboard({ applicantId, applicantInfo, result, onResult
   const gradeColor = result?.score?.grade_color || '#b5e550'
   const signals = result?.signals || {}
   const signalScores = result?.score?.signal_scores || {}
+  const benchmark = result?.benchmark_context
 
   return (
     <div style={styles.page}>
@@ -97,8 +100,24 @@ export default function Dashboard({ applicantId, applicantInfo, result, onResult
             </div>
           </div>
           {result && (
-            <div style={{ ...styles.gradePill, borderColor: gradeColor, color: gradeColor }}>
-              {grade}
+            <div style={styles.applicantRowRight}>
+              <div style={{ ...styles.gradePill, borderColor: gradeColor, color: gradeColor }}>
+                {grade}
+              </div>
+              <button
+                style={{ ...styles.benchmarkToggleBtn, ...(showWhatIf ? styles.toggleBtnActive : {}) }}
+                onClick={() => { setShowWhatIf(prev => !prev); setShowBenchmark(false) }}
+              >
+                {showWhatIf ? '← Back to results' : '⟳ What If Simulator'}
+              </button>
+              {benchmark?.signal_comparison?.length > 0 && (
+                <button
+                  style={styles.benchmarkToggleBtn}
+                  onClick={() => { setShowBenchmark(prev => !prev); setShowWhatIf(false) }}
+                >
+                  {showBenchmark ? '← Back to results' : '⊞ View benchmark data'}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -141,7 +160,8 @@ export default function Dashboard({ applicantId, applicantInfo, result, onResult
 
         {/* Results */}
         {result && (
-          <div style={styles.resultsGrid}>
+          <>
+            <div style={{ ...styles.resultsGrid, display: (showBenchmark || showWhatIf) ? 'none' : 'grid' }}>
 
             {/* COL 1 — score */}
             <div style={styles.scoreCard}>
@@ -222,16 +242,337 @@ export default function Dashboard({ applicantId, applicantInfo, result, onResult
               </div>
             </div>
 
-          </div>
+            </div>
+
+            {showBenchmark && benchmark?.signal_comparison?.length > 0 && (
+              <BenchmarkContext
+                benchmark={benchmark}
+                applicantName={applicantInfo.name || result.name || 'This applicant'}
+              />
+            )}
+
+            {showWhatIf && (
+              <WhatIfSimulator
+                signals={signals}
+                signalScores={signalScores}
+                originalScore={score}
+              />
+            )}
+          </>
         )}
       </main>
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+        .what-if-slider {
+          -webkit-appearance: none; appearance: none;
+          width: 100%; height: 5px; border-radius: 3px;
+          background: rgba(255,255,255,0.1); outline: none; cursor: pointer;
+        }
+        .what-if-slider::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none;
+          width: 18px; height: 18px; border-radius: 50%;
+          background: var(--thumb-color, rgba(255,255,255,0.35));
+          cursor: pointer; transition: background 0.2s, transform 0.1s;
+        }
+        .what-if-slider::-webkit-slider-thumb:hover { transform: scale(1.25); }
+        .what-if-slider::-moz-range-thumb {
+          width: 18px; height: 18px; border-radius: 50%; border: none;
+          background: var(--thumb-color, rgba(255,255,255,0.35)); cursor: pointer;
+        }
       `}</style>
     </div>
   )
+}
+
+function WhatIfSimulator({ signals, signalScores, originalScore }) {
+  const SIGNAL_KEYS = Object.keys(SIGNAL_LABELS)
+
+  const [simValues, setSimValues] = useState(() => {
+    const init = {}
+    SIGNAL_KEYS.forEach(k => { init[k] = signalScores[k] ?? 0 })
+    return init
+  })
+  const [simResult, setSimResult] = useState(null)
+  const [loadingScore, setLoadingScore] = useState(false)
+  const [explanation, setExplanation] = useState(null)
+  const scoreDebounceRef = useRef(null)
+  const explainCacheRef = useRef({})  // key:value -> explanation text
+
+  const recalculate = useCallback(async (values) => {
+    setLoadingScore(true)
+    const overrides = {}
+    SIGNAL_KEYS.forEach(k => {
+      if (values[k] !== (signalScores[k] ?? 0)) overrides[k] = values[k]
+    })
+    try {
+      const res = await fetch(`${API}/what-if`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signals, simulated_overrides: overrides }),
+      })
+      if (res.ok) setSimResult(await res.json())
+    } catch {}
+    setLoadingScore(false)
+  }, [signals, signalScores])
+
+  function handleSliderChange(key, value) {
+    const newValues = { ...simValues, [key]: value }
+    setSimValues(newValues)
+    clearTimeout(scoreDebounceRef.current)
+    scoreDebounceRef.current = setTimeout(() => recalculate(newValues), 280)
+  }
+
+  async function handleSliderRelease(key) {
+    const originalVal = signalScores[key] ?? 0
+    const newVal = simValues[key]
+    if (newVal === originalVal) return
+
+    const cacheKey = `${key}:${originalVal}→${newVal}`
+    if (explainCacheRef.current[cacheKey]) {
+      setExplanation({ signal_key: key, text: explainCacheRef.current[cacheKey], loading: false })
+      return
+    }
+
+    setExplanation({ signal_key: key, text: null, loading: true })
+    try {
+      const res = await fetch(`${API}/what-if/explain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signal_key: key, current_value: originalVal, target_value: newVal }),
+      })
+      if (res.ok) {
+        const { explanation: text } = await res.json()
+        explainCacheRef.current[cacheKey] = text
+        setExplanation({ signal_key: key, text, loading: false })
+      }
+    } catch {
+      setExplanation(null)
+    }
+  }
+
+  function handleReset() {
+    const init = {}
+    SIGNAL_KEYS.forEach(k => { init[k] = signalScores[k] ?? 0 })
+    setSimValues(init)
+    setSimResult(null)
+    setExplanation(null)
+    clearTimeout(scoreDebounceRef.current)
+  }
+
+  const displayedScore = simResult?.simulated_score ?? originalScore
+  const delta = simResult?.delta ?? 0
+  const displayGrade = simResult?.grade ?? ''
+  const displayColor = simResult?.grade_color ?? '#b5e550'
+  const simSignalScores = simResult?.signal_scores ?? signalScores
+
+  return (
+    <div style={styles.whatIfSection}>
+      <div style={styles.whatIfHeader}>
+        <div>
+          <div style={styles.cardTitle}>What If Simulator</div>
+          <div style={styles.whatIfSubtitle}>
+            Drag a signal slider to see how the score changes in real time
+          </div>
+        </div>
+        <button style={styles.whatIfResetBtn} onClick={handleReset}>Reset all</button>
+      </div>
+
+      {/* Score comparison */}
+      <div style={styles.whatIfScoreRow}>
+        <div style={styles.whatIfScoreBlock}>
+          <div style={styles.whatIfScoreLabel}>Current score</div>
+          <div style={{ ...styles.whatIfScoreNum, color: 'rgba(232,228,220,0.6)' }}>{originalScore}</div>
+        </div>
+
+        <div style={styles.whatIfDelta}>
+          {delta !== 0 ? (
+            <span style={{ color: delta > 0 ? '#b5e550' : '#ef4444' }}>
+              {delta > 0 ? `+${delta}` : delta}
+            </span>
+          ) : (
+            <span style={{ color: 'rgba(232,228,220,0.2)' }}>—</span>
+          )}
+        </div>
+
+        <div style={styles.whatIfScoreBlock}>
+          <div style={styles.whatIfScoreLabel}>Simulated score</div>
+          <div style={{ ...styles.whatIfScoreNum, color: delta !== 0 ? displayColor : 'rgba(232,228,220,0.6)' }}>
+            {loadingScore ? '···' : displayedScore}
+            {displayGrade && delta !== 0 && (
+              <span style={{ fontSize: 15, fontWeight: 500, marginLeft: 10, opacity: 0.75 }}>
+                ({displayGrade})
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Sliders */}
+      <div style={styles.slidersGrid}>
+        {SIGNAL_KEYS.map(key => {
+          const original = signalScores[key] ?? 0
+          const simVal = simValues[key]
+          const changed = simVal !== original
+          const simSig = simSignalScores[key] ?? simVal
+          const barColor = simSig >= 70 ? '#b5e550' : simSig >= 50 ? '#eab308' : '#ef4444'
+
+          return (
+            <div key={key} style={styles.sliderRow}>
+              <div style={styles.sliderMeta}>
+                <span style={styles.sliderLabel}>{SIGNAL_LABELS[key]}</span>
+                <div style={styles.sliderValues}>
+                  {changed && (
+                    <span style={{ fontSize: 13, color: 'rgba(232,228,220,0.3)', textDecoration: 'line-through', marginRight: 8 }}>
+                      {original}
+                    </span>
+                  )}
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: changed ? barColor : 'rgba(232,228,220,0.45)',
+                  }}>
+                    {simVal}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'rgba(232,228,220,0.2)', marginLeft: 4 }}>/100</span>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={simVal}
+                onChange={e => handleSliderChange(key, parseInt(e.target.value))}
+                onMouseUp={() => handleSliderRelease(key)}
+                onTouchEnd={() => handleSliderRelease(key)}
+                className="what-if-slider"
+                style={{ '--thumb-color': changed ? barColor : 'rgba(255,255,255,0.35)' }}
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Explanation box */}
+      {explanation && (
+        <div style={styles.explanationBox}>
+          <div style={styles.explanationHeader}>
+            <span style={styles.explanationSignalName}>{SIGNAL_LABELS[explanation.signal_key]}</span>
+            <span style={styles.explanationBadge}>Claude</span>
+          </div>
+          {explanation.loading ? (
+            <div style={styles.explanationLoading}>Generating guidance…</div>
+          ) : (
+            <p style={styles.explanationText}>{explanation.text}</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BenchmarkContext({ benchmark, applicantName }) {
+  const distribution = benchmark.score_distribution || {}
+  const profile = benchmark.similar_approved_profile || {}
+
+  return (
+    <section style={styles.benchmarkSection}>
+      <div style={styles.benchmarkCard}>
+        <div style={styles.benchmarkTitle}>Signal-by-signal comparison</div>
+        <div style={styles.legendRow}>
+          <Legend color="#4fa3e3" label={`${applicantName} (this applicant)`} />
+          <Legend color="#b5e550" label="Avg approved applicant" />
+          <Legend color="#f0883e" label="Avg rejected applicant" />
+        </div>
+
+        <div style={styles.comparisonRows}>
+          {benchmark.signal_comparison.map(row => (
+            <div key={row.key} style={styles.comparisonRow}>
+              <div style={styles.comparisonLabel}>{row.label}</div>
+              <div style={styles.comparisonBars}>
+                <ComparisonBar color="#4fa3e3" value={row.applicant} />
+                <ComparisonBar color="#b5e550" value={row.approved_avg} />
+                <ComparisonBar color="#f0883e" value={row.rejected_avg} />
+              </div>
+              <div style={styles.comparisonValues}>
+                <span style={{ color: '#4fa3e3' }}>{Math.round(row.applicant)}</span>
+                <span style={{ color: '#b5e550' }}>{Math.round(row.approved_avg)}</span>
+                <span style={{ color: '#f0883e' }}>{Math.round(row.rejected_avg)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={styles.benchmarkBottomGrid}>
+        <div style={styles.contextCard}>
+          <div style={styles.contextTitle}>Score distribution context</div>
+          {(distribution.bands || []).map(band => (
+            <div key={band.label} style={styles.contextLine}>
+              <span>{band.label}</span>
+              <strong style={{ color: '#e8e4dc' }}>{band.percent}% of applicants</strong>
+            </div>
+          ))}
+          <div style={styles.contextTier}>
+            <span>{applicantName.split(' ')[0] || 'Applicant'}'s tier</span>
+            <strong style={{ color: '#b5e550' }}>{distribution.current_tier} - top {100 - (distribution.percentile || 0)}%</strong>
+          </div>
+        </div>
+
+        <div style={styles.contextCard}>
+          <div style={styles.contextTitle}>Similar approved applicants – profile</div>
+          <div style={styles.contextLine}>
+            <span>Avg eligible loan amount</span>
+            <strong style={{ color: '#e8e4dc' }}>{formatCurrency(profile.avg_loan_amount)}</strong>
+          </div>
+          <div style={styles.contextLine}>
+            <span>Avg benchmark score</span>
+            <strong style={{ color: '#e8e4dc' }}>{profile.avg_credit_score || 0}</strong>
+          </div>
+          <div style={styles.contextLine}>
+            <span>90-day default rate</span>
+            <strong style={{ color: '#e8e4dc' }}>{profile.default_rate || 0}%</strong>
+          </div>
+          <div style={styles.contextLine}>
+            <span>Median declared income</span>
+            <strong style={{ color: '#e8e4dc' }}>{formatCurrency(profile.median_declared_income)}</strong>
+          </div>
+          <div style={styles.contextTier}>
+            <span>Benchmark cohort</span>
+            <strong style={{ color: '#b5e550' }}>{profile.sample_size || 0} approved applicants</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function Legend({ color, label }) {
+  return (
+    <div style={styles.legendItem}>
+      <span style={{ ...styles.legendDot, background: color }} />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+function ComparisonBar({ color, value }) {
+  return (
+    <div style={styles.comparisonTrack}>
+      <div style={{ ...styles.comparisonFill, width: `${Math.max(0, Math.min(100, value))}%`, background: color }} />
+    </div>
+  )
+}
+
+function formatCurrency(value) {
+  const numeric = Number(value || 0)
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(numeric)
 }
 
 const styles = {
@@ -376,5 +717,202 @@ const styles = {
   },
   narrativeId: {
     fontFamily: "'DM Mono', monospace", fontSize: 12, color: 'rgba(232,228,220,0.2)',
+  },
+
+  benchmarkSection: {
+    marginTop: 24,
+    animation: 'fadeIn 0.6s ease',
+  },
+  benchmarkCard: {
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 18,
+    padding: '26px 28px 30px',
+    color: '#e8e4dc',
+  },
+  benchmarkTitle: {
+    fontFamily: "'DM Mono', monospace",
+    fontSize: 13,
+    color: '#b5e550',
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    marginBottom: 16,
+  },
+  legendRow: {
+    display: 'flex',
+    gap: 28,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 28,
+    color: 'rgba(232,228,220,0.65)',
+    fontSize: 14,
+  },
+  legendItem: { display: 'flex', alignItems: 'center', gap: 9 },
+  legendDot: { width: 12, height: 12, borderRadius: 3, display: 'inline-block' },
+  comparisonRows: { display: 'flex', flexDirection: 'column', gap: 28 },
+  comparisonRow: {
+    display: 'grid',
+    gridTemplateColumns: '210px 1fr 48px',
+    gap: 28,
+    alignItems: 'center',
+  },
+  comparisonLabel: { fontSize: 15, color: 'rgba(232,228,220,0.8)' },
+  comparisonBars: { display: 'flex', flexDirection: 'column', gap: 7 },
+  comparisonTrack: {
+    height: 10,
+    background: 'rgba(255,255,255,0.07)',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  comparisonFill: {
+    height: '100%',
+    borderRadius: 999,
+    transition: 'width 1s ease',
+  },
+  comparisonValues: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 3,
+    fontFamily: "'DM Mono', monospace",
+    fontSize: 13,
+    fontWeight: 600,
+    textAlign: 'right',
+  },
+  benchmarkBottomGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 18,
+    marginTop: 18,
+  },
+  contextCard: {
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 18,
+    padding: '24px 26px',
+    color: '#e8e4dc',
+  },
+  contextTitle: {
+    fontFamily: "'DM Mono', monospace",
+    fontSize: 13,
+    color: '#b5e550',
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    marginBottom: 16,
+  },
+  contextLine: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 20,
+    padding: '9px 0',
+    borderBottom: '1px solid rgba(255,255,255,0.07)',
+    fontSize: 15,
+    color: 'rgba(232,228,220,0.65)',
+  },
+  contextTier: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 20,
+    marginTop: 12,
+    fontSize: 15,
+    color: 'rgba(232,228,220,0.8)',
+  },
+
+  applicantRowRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+  },
+  benchmarkToggleBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 22px',
+    background: 'rgba(181,229,80,0.07)',
+    border: '1px solid rgba(181,229,80,0.3)',
+    borderRadius: 30,
+    color: '#b5e550',
+    fontSize: 13,
+    fontFamily: "'DM Mono', monospace",
+    letterSpacing: '0.05em',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  toggleBtnActive: {
+    background: 'rgba(181,229,80,0.15)',
+    border: '1px solid rgba(181,229,80,0.6)',
+  },
+
+  // ── What If Simulator ────────────────────────────────────────────────────────
+  whatIfSection: {
+    marginTop: 24,
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(181,229,80,0.2)',
+    borderRadius: 18,
+    padding: '32px 36px 36px',
+    animation: 'fadeIn 0.4s ease',
+  },
+  whatIfHeader: {
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28,
+  },
+  whatIfSubtitle: {
+    fontSize: 14, color: 'rgba(232,228,220,0.4)', marginTop: 6,
+  },
+  whatIfResetBtn: {
+    background: 'none', border: '1px solid rgba(255,255,255,0.15)',
+    borderRadius: 8, padding: '8px 18px', color: 'rgba(232,228,220,0.45)',
+    fontSize: 13, fontFamily: "'DM Sans', sans-serif", cursor: 'pointer',
+  },
+
+  whatIfScoreRow: {
+    display: 'flex', alignItems: 'center', gap: 24,
+    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+    borderRadius: 14, padding: '22px 28px', marginBottom: 32,
+  },
+  whatIfScoreBlock: { flex: 1 },
+  whatIfScoreLabel: {
+    fontFamily: "'DM Mono', monospace", fontSize: 12, color: 'rgba(232,228,220,0.3)',
+    letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8,
+  },
+  whatIfScoreNum: {
+    fontFamily: "'DM Serif Display', serif", fontSize: 48, lineHeight: 1,
+  },
+  whatIfDelta: {
+    fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 700,
+    minWidth: 64, textAlign: 'center',
+  },
+
+  slidersGrid: {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 48px',
+    marginBottom: 28,
+  },
+  sliderRow: { display: 'flex', flexDirection: 'column', gap: 10 },
+  sliderMeta: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+  },
+  sliderLabel: { fontSize: 14, color: 'rgba(232,228,220,0.75)' },
+  sliderValues: { display: 'flex', alignItems: 'baseline', gap: 0 },
+
+  explanationBox: {
+    background: 'rgba(181,229,80,0.05)', border: '1px solid rgba(181,229,80,0.2)',
+    borderRadius: 12, padding: '20px 24px',
+    animation: 'fadeIn 0.3s ease',
+  },
+  explanationHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12,
+  },
+  explanationSignalName: {
+    fontFamily: "'DM Mono', monospace", fontSize: 13, color: '#b5e550',
+    letterSpacing: '0.08em', textTransform: 'uppercase',
+  },
+  explanationBadge: {
+    fontSize: 12, background: 'rgba(181,229,80,0.08)',
+    border: '1px solid rgba(181,229,80,0.2)',
+    padding: '3px 10px', borderRadius: 20, color: 'rgba(181,229,80,0.6)',
+  },
+  explanationLoading: {
+    fontSize: 14, color: 'rgba(232,228,220,0.35)', fontStyle: 'italic',
+  },
+  explanationText: {
+    fontSize: 16, color: 'rgba(232,228,220,0.8)', lineHeight: 1.7, margin: 0,
   },
 }
