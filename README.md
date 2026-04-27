@@ -13,10 +13,10 @@ Alternative credit scoring for the unbanked. Upload utility bills, phone bills, 
 ### Tools used
 
 **Gemini API**
-Used in two ways. First, as the primary document extraction engine — Gemini 2.0 Flash Vision reads uploaded bill and receipt images and extracts structured financial signals (payment consistency, rental tenure, bill regularity, income stability, data completeness) as JSON. It handles real-world document quality: crumpled paper, bad lighting, angled phone photos, documents in any language. Second, we used Google AI Studio with Gemini to generate realistic persona-based test documents — electricity bills, phone bills, rental receipts, and water bills for both Indian and American applicants, with consistent names, addresses, account numbers, and payment histories across each set — used as demo input during the hackathon.
+Used in two ways. First, as the primary document extraction engine — Gemini 2.0 Flash Vision reads uploaded bill and receipt images and extracts structured financial signals (payment consistency, rental tenure, bill regularity, income stability, data completeness) as JSON. It handles real-world document quality: crumpled paper, bad lighting, angled phone photos, documents in any language. Second, we used Google AI Studio with Gemini to generate realistic persona-based test documents such as electricity bills, phone bills, rental receipts, and water bills for both Indian and American applicants, with consistent names, addresses, account numbers, and payment histories across each set used as demo input during the hackathon.
 
 **Antigravity**
-Used as the AI-assisted code editor throughout the build. Antigravity accelerated development across the entire codebase — scaffolding FastAPI modules, debugging SSE streaming, building the ML scoring pipeline, iterating on the What If Simulator UI, and reviewing code across different models depending on the task. It was used for both active coding and debugging sessions.
+Used as the AI-assisted code editor throughout the build. Antigravity accelerated development across the entire codebase scaffolding FastAPI modules, debugging SSE streaming, building the ML scoring pipeline, iterating on the What If Simulator UI, and reviewing code across different models depending on the task. It was used for both active coding and debugging sessions.
 
 ---
 
